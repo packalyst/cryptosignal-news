@@ -20,8 +20,18 @@ import (
 func NewRouter(cfg *config.Config, db *database.DB, redisCache *cache.Redis) *chi.Mux {
 	r := chi.NewRouter()
 
-	// Create rate limiter
-	rateLimiter := middleware.NewRateLimiter(cfg.RateLimitPerMinute, 60*1000000000) // 1 minute in nanoseconds
+	// Initialize repositories
+	articleRepo := repository.NewArticleRepository(db)
+	sourceRepo := repository.NewSourceRepository(db)
+	userRepo := repository.NewUserRepository(db)
+
+	// Initialize auth services (needed for rate limiter)
+	jwtService := auth.NewJWTService(cfg.JWTSecret, 24*time.Hour)
+	apiKeyService := auth.NewAPIKeyService(db)
+	authMiddleware := auth.NewAuthMiddleware(jwtService, apiKeyService)
+
+	// Create tier-based rate limiter
+	tierRateLimiter := middleware.NewTierRateLimiter(cfg)
 
 	// Global middleware
 	r.Use(middleware.RequestID)
@@ -30,17 +40,8 @@ func NewRouter(cfg *config.Config, db *database.DB, redisCache *cache.Redis) *ch
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.SecurityHeaders)
 	r.Use(middleware.CORSWithOrigins(cfg.CORSOrigins))
-	r.Use(middleware.RateLimit(rateLimiter))
-
-	// Initialize repositories
-	articleRepo := repository.NewArticleRepository(db)
-	sourceRepo := repository.NewSourceRepository(db)
-	userRepo := repository.NewUserRepository(db)
-
-	// Initialize auth services
-	jwtService := auth.NewJWTService(cfg.JWTSecret, 24*time.Hour)
-	apiKeyService := auth.NewAPIKeyService(db)
-	authMiddleware := auth.NewAuthMiddleware(jwtService, apiKeyService)
+	r.Use(authMiddleware.OptionalAuth)                        // Check auth for rate limiting (doesn't require auth)
+	r.Use(middleware.TierRateLimit(cfg, tierRateLimiter))
 
 	// Initialize services
 	newsService := service.NewNewsService(articleRepo, redisCache)

@@ -1,11 +1,14 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/cryptosignal-news/backend/internal/api/response"
+	"github.com/cryptosignal-news/backend/internal/auth"
+	"github.com/cryptosignal-news/backend/internal/config"
 )
 
 // RateLimiter implements a simple in-memory rate limiter
@@ -156,4 +159,128 @@ func getClientIP(r *http.Request) string {
 // DefaultRateLimiter creates a default rate limiter with 10 requests per minute
 func DefaultRateLimiter() *RateLimiter {
 	return NewRateLimiter(10, time.Minute)
+}
+
+// TierRateLimiter implements tier-based rate limiting
+type TierRateLimiter struct {
+	mu       sync.RWMutex
+	requests map[string]*clientRequests
+	cfg      *config.Config
+	window   time.Duration
+}
+
+// NewTierRateLimiter creates a tier-aware rate limiter
+func NewTierRateLimiter(cfg *config.Config) *TierRateLimiter {
+	trl := &TierRateLimiter{
+		requests: make(map[string]*clientRequests),
+		cfg:      cfg,
+		window:   time.Minute,
+	}
+
+	// Start cleanup goroutine
+	go trl.cleanup()
+
+	return trl
+}
+
+func (trl *TierRateLimiter) cleanup() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		trl.mu.Lock()
+		now := time.Now()
+		for key, client := range trl.requests {
+			if now.After(client.resetTime) {
+				delete(trl.requests, key)
+			}
+		}
+		trl.mu.Unlock()
+	}
+}
+
+// getLimitForTier returns the rate limit for a given tier
+func (trl *TierRateLimiter) getLimitForTier(tier string) int {
+	switch tier {
+	case "enterprise":
+		return trl.cfg.RateLimitEnterprise
+	case "pro":
+		return trl.cfg.RateLimitPro
+	case "free":
+		return trl.cfg.RateLimitFree
+	default:
+		return trl.cfg.RateLimitAnonymous
+	}
+}
+
+// Allow checks if a request should be allowed based on identifier and tier
+func (trl *TierRateLimiter) Allow(identifier string, tier string) (bool, int, int) {
+	limit := trl.getLimitForTier(tier)
+
+	trl.mu.Lock()
+	defer trl.mu.Unlock()
+
+	now := time.Now()
+	client, exists := trl.requests[identifier]
+
+	if !exists || now.After(client.resetTime) {
+		trl.requests[identifier] = &clientRequests{
+			count:     1,
+			resetTime: now.Add(trl.window),
+		}
+		return true, limit, limit - 1
+	}
+
+	if client.count >= limit {
+		return false, limit, 0
+	}
+
+	client.count++
+	remaining := limit - client.count
+	if remaining < 0 {
+		remaining = 0
+	}
+	return true, limit, remaining
+}
+
+// TierRateLimit creates a middleware that limits requests by user tier
+func TierRateLimit(cfg *config.Config, limiter *TierRateLimiter) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Skip if rate limiting is disabled
+			if !cfg.RateLimitEnabled {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Determine identifier and tier
+			var identifier string
+			var tier string
+
+			user := auth.GetUser(r.Context())
+			if user != nil {
+				// Authenticated user - use user ID and their tier
+				identifier = "user:" + user.ID
+				tier = user.Tier
+			} else {
+				// Anonymous - use IP address
+				identifier = "ip:" + getClientIP(r)
+				tier = "anonymous"
+			}
+
+			allowed, limit, remaining := limiter.Allow(identifier, tier)
+
+			// Set rate limit headers
+			w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", limit))
+			w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
+
+			if !allowed {
+				w.Header().Set("Retry-After", "60")
+				response.TooManyRequests(w, "Rate limit exceeded. Please try again later.")
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
 }

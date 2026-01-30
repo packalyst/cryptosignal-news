@@ -30,8 +30,12 @@ type Config struct {
 	// CORS
 	CORSOrigins []string
 
-	// Rate limiting
-	RateLimitPerMinute int
+	// Rate limiting (per minute)
+	RateLimitEnabled    bool
+	RateLimitAnonymous  int
+	RateLimitFree       int
+	RateLimitPro        int
+	RateLimitEnterprise int
 
 	// Cache TTL (seconds)
 	CacheTTL int
@@ -55,9 +59,13 @@ func Load() *Config {
 		RedisURL:           getEnv("REDIS_URL", "redis://localhost:6379"),
 		JWTSecret:          getEnv("JWT_SECRET", "change-me-in-production"),
 		GroqAPIKey:         getEnv("GROQ_API_KEY", ""),
-		CORSOrigins:        getEnvSlice("CORS_ORIGINS", []string{"*"}),
-		RateLimitPerMinute: getEnvInt("RATE_LIMIT_PER_MINUTE", 100),
-		CacheTTL:           getEnvInt("CACHE_TTL", 60),
+		CORSOrigins:         getEnvSlice("CORS_ORIGINS", []string{"*"}),
+		RateLimitEnabled:    getEnvBool("RATE_LIMIT_ENABLED", true),
+		RateLimitAnonymous:  getEnvInt("RATE_LIMIT_ANONYMOUS", 10),
+		RateLimitFree:       getEnvInt("RATE_LIMIT_FREE", 60),
+		RateLimitPro:        getEnvInt("RATE_LIMIT_PRO", 300),
+		RateLimitEnterprise: getEnvInt("RATE_LIMIT_ENTERPRISE", 1000),
+		CacheTTL:            getEnvInt("CACHE_TTL", 60),
 		EnableMetrics:      getEnvBool("ENABLE_METRICS", false),
 		FetcherWorkers:     getEnvInt("FETCHER_WORKERS", 50),
 		FetcherTimeout:     getEnvDuration("FETCHER_TIMEOUT", 10*time.Second),
