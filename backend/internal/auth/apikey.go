@@ -58,8 +58,8 @@ func (s *APIKeyService) Generate(ctx context.Context, userID string, name string
 	// Hash the key for storage
 	keyHash := hashAPIKey(plainKey)
 
-	// Extract prefix for identification (first 12 chars after csn_live_)
-	keyPrefix := plainKey[:len(APIKeyPrefix)+8]
+	// Extract prefix for identification (first 7 chars after csn_live_)
+	keyPrefix := plainKey[:len(APIKeyPrefix)+7] // csn_live_ (9) + 7 = 16 chars
 
 	// Create the API key record
 	apiKey := &models.APIKey{
@@ -127,7 +127,7 @@ func (s *APIKeyService) Validate(ctx context.Context, key string) (*models.User,
 	}
 
 	// Update last used timestamp
-	updateQuery := `UPDATE api_keys SET last_used = $1 WHERE key_hash = $2`
+	updateQuery := `UPDATE api_keys SET last_used_at = $1 WHERE key_hash = $2`
 	_, _ = s.db.Exec(ctx, updateQuery, time.Now(), keyHash)
 
 	return &user, nil
@@ -151,7 +151,7 @@ func (s *APIKeyService) Revoke(ctx context.Context, keyID string, userID string)
 // List returns all API keys for a user (without the actual key values)
 func (s *APIKeyService) List(ctx context.Context, userID string) ([]models.APIKey, error) {
 	query := `
-		SELECT id, user_id, key_prefix, name, is_active, last_used, created_at
+		SELECT id, user_id, key_prefix, name, is_active, last_used_at, created_at
 		FROM api_keys
 		WHERE user_id = $1
 		ORDER BY created_at DESC

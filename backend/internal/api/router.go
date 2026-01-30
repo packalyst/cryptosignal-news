@@ -1,10 +1,13 @@
 package api
 
 import (
+	"time"
+
 	"github.com/go-chi/chi/v5"
 
 	"github.com/cryptosignal-news/backend/internal/ai"
 	"github.com/cryptosignal-news/backend/internal/api/handlers"
+	"github.com/cryptosignal-news/backend/internal/auth"
 	"github.com/cryptosignal-news/backend/internal/cache"
 	"github.com/cryptosignal-news/backend/internal/config"
 	"github.com/cryptosignal-news/backend/internal/database"
@@ -31,6 +34,12 @@ func NewRouter(cfg *config.Config, db *database.DB, redisCache *cache.Redis) *ch
 	// Initialize repositories
 	articleRepo := repository.NewArticleRepository(db)
 	sourceRepo := repository.NewSourceRepository(db)
+	userRepo := repository.NewUserRepository(db)
+
+	// Initialize auth services
+	jwtService := auth.NewJWTService(cfg.JWTSecret, 24*time.Hour)
+	apiKeyService := auth.NewAPIKeyService(db)
+	authMiddleware := auth.NewAuthMiddleware(jwtService, apiKeyService)
 
 	// Initialize services
 	newsService := service.NewNewsService(articleRepo, redisCache)
@@ -48,6 +57,7 @@ func NewRouter(cfg *config.Config, db *database.DB, redisCache *cache.Redis) *ch
 	newsHandler := handlers.NewNewsHandler(newsService)
 	sourceHandler := handlers.NewSourceHandler(sourceService)
 	aiHandler := handlers.NewAIHandler(sentimentService, summaryService, signalsService, newsService)
+	authHandler := handlers.NewAuthHandler(userRepo, jwtService, apiKeyService)
 
 	// Health endpoints
 	r.Get("/health", healthHandler.Health)
@@ -56,6 +66,11 @@ func NewRouter(cfg *config.Config, db *database.DB, redisCache *cache.Redis) *ch
 
 	// API v1
 	r.Route("/api/v1", func(r chi.Router) {
+		// Public auth endpoints
+		r.Post("/auth/register", authHandler.Register)
+		r.Post("/auth/login", authHandler.Login)
+		r.Post("/auth/refresh", authHandler.RefreshToken)
+
 		// Public news endpoints
 		r.Get("/news", newsHandler.ListNews)
 		r.Get("/news/breaking", newsHandler.BreakingNews)
@@ -71,6 +86,15 @@ func NewRouter(cfg *config.Config, db *database.DB, redisCache *cache.Redis) *ch
 		r.Get("/ai/sentiment", aiHandler.GetSentiment)
 		r.Get("/ai/summary", aiHandler.GetSummary)
 		r.Get("/ai/signals", aiHandler.GetSignals)
+
+		// Protected user endpoints (require authentication)
+		r.Route("/user", func(r chi.Router) {
+			r.Use(authMiddleware.Authenticate)
+			r.Get("/me", authHandler.GetCurrentUser)
+			r.Post("/api-keys", authHandler.CreateAPIKey)
+			r.Get("/api-keys", authHandler.ListAPIKeys)
+			r.Delete("/api-keys/{keyID}", authHandler.RevokeAPIKey)
+		})
 	})
 
 	return r

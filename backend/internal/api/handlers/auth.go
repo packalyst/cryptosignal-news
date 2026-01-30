@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -276,6 +277,7 @@ func (h *AuthHandler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	// Generate the API key
 	generated, err := h.apiKeyService.Generate(r.Context(), user.ID, req.Name)
 	if err != nil {
+		log.Printf("[auth] CreateAPIKey error: %v", err)
 		writeError(w, http.StatusInternalServerError, "server_error", "Failed to create API key")
 		return
 	}
@@ -309,6 +311,7 @@ func (h *AuthHandler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
 
 	keys, err := h.apiKeyService.List(r.Context(), user.ID)
 	if err != nil {
+		log.Printf("[auth] ListAPIKeys error: %v", err)
 		writeError(w, http.StatusInternalServerError, "server_error", "Failed to list API keys")
 		return
 	}
