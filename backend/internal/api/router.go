@@ -25,7 +25,7 @@ func NewRouter(cfg *config.Config, db *database.DB, redisCache *cache.Redis) *ch
 	r.Use(middleware.Timing)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.CORS())
+	r.Use(middleware.CORSWithOrigins(cfg.CORSOrigins))
 	r.Use(middleware.RateLimit(rateLimiter))
 
 	// Initialize repositories

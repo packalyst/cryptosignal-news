@@ -5,6 +5,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -25,6 +26,9 @@ type Config struct {
 
 	// External APIs
 	GroqAPIKey string
+
+	// CORS
+	CORSOrigins []string
 
 	// Rate limiting
 	RateLimitPerMinute int
@@ -51,7 +55,8 @@ func Load() *Config {
 		RedisURL:           getEnv("REDIS_URL", "redis://localhost:6379"),
 		JWTSecret:          getEnv("JWT_SECRET", "change-me-in-production"),
 		GroqAPIKey:         getEnv("GROQ_API_KEY", ""),
-		RateLimitPerMinute: getEnvInt("RATE_LIMIT_PER_MINUTE", 10),
+		CORSOrigins:        getEnvSlice("CORS_ORIGINS", []string{"*"}),
+		RateLimitPerMinute: getEnvInt("RATE_LIMIT_PER_MINUTE", 100),
 		CacheTTL:           getEnvInt("CACHE_TTL", 60),
 		EnableMetrics:      getEnvBool("ENABLE_METRICS", false),
 		FetcherWorkers:     getEnvInt("FETCHER_WORKERS", 50),
@@ -111,4 +116,23 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 		return defaultValue
 	}
 	return parsed
+}
+
+// getEnvSlice retrieves a comma-separated environment variable as a slice.
+func getEnvSlice(key string, defaultValue []string) []string {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	if len(result) == 0 {
+		return defaultValue
+	}
+	return result
 }
