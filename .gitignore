@@ -1,0 +1,54 @@
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.vercel
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker persistent data
+postgres-data/
+
+# Logs
+*.log
+logs/
+
+# Build artifacts
+dist/
+build/
+tmp/
+
+# Test coverage
+coverage/
+*.cover
+*.coverage
+
+# Compiled binaries
+backend/api
+backend/bin/

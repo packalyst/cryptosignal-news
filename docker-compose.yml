@@ -1,0 +1,100 @@
+version: "3.8"
+
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=postgres://cryptonews:cryptonews@postgres:5432/cryptonews?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - ENV=development
+      - PORT=8080
+      - LOG_LEVEL=debug
+      - CORS_ORIGINS=http://localhost:3000
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - RATE_LIMIT_PER_MINUTE=100
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - cryptosignal
+
+  fetcher:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.fetcher
+    environment:
+      - DATABASE_URL=postgres://cryptonews:cryptonews@postgres:5432/cryptonews?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - FETCH_INTERVAL=180
+      - LOG_LEVEL=info
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - cryptosignal
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - API_URL=http://api:8080
+      - NEXT_PUBLIC_API_URL=http://localhost:8080
+      - NODE_ENV=development
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - cryptosignal
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cryptonews
+      POSTGRES_PASSWORD: cryptonews
+      POSTGRES_DB: cryptonews
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cryptonews"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cryptosignal
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cryptosignal
+
+networks:
+  cryptosignal:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
