@@ -5,15 +5,15 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/cryptosignal-news/backend/internal/ai"
-	"github.com/cryptosignal-news/backend/internal/api/handlers"
-	"github.com/cryptosignal-news/backend/internal/auth"
-	"github.com/cryptosignal-news/backend/internal/cache"
-	"github.com/cryptosignal-news/backend/internal/config"
-	"github.com/cryptosignal-news/backend/internal/database"
-	"github.com/cryptosignal-news/backend/internal/middleware"
-	"github.com/cryptosignal-news/backend/internal/repository"
-	"github.com/cryptosignal-news/backend/internal/service"
+	"cryptosignal-news/backend/internal/ai"
+	"cryptosignal-news/backend/internal/api/handlers"
+	"cryptosignal-news/backend/internal/auth"
+	"cryptosignal-news/backend/internal/cache"
+	"cryptosignal-news/backend/internal/config"
+	"cryptosignal-news/backend/internal/database"
+	"cryptosignal-news/backend/internal/middleware"
+	"cryptosignal-news/backend/internal/repository"
+	"cryptosignal-news/backend/internal/service"
 )
 
 // NewRouter creates and configures the main router
@@ -26,8 +26,8 @@ func NewRouter(cfg *config.Config, db *database.DB, redisCache *cache.Redis) *ch
 	userRepo := repository.NewUserRepository(db)
 
 	// Initialize auth services (needed for rate limiter)
-	jwtService := auth.NewJWTService(cfg.JWTSecret, 24*time.Hour)
-	apiKeyService := auth.NewAPIKeyService(db)
+	jwtService := auth.NewJWTService(cfg.JWTSecret, 24*time.Hour, cfg.JWTRefreshGracePeriod)
+	apiKeyService := auth.NewAPIKeyService(db, cfg.MaxAPIKeysPerUser)
 	authMiddleware := auth.NewAuthMiddleware(jwtService, apiKeyService)
 
 	// Create tier-based rate limiter
@@ -38,21 +38,22 @@ func NewRouter(cfg *config.Config, db *database.DB, redisCache *cache.Redis) *ch
 	r.Use(middleware.Timing)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.SecurityHeaders)
+	r.Use(middleware.SecurityHeadersWithConfig(cfg))
 	r.Use(middleware.CORSWithOrigins(cfg.CORSOrigins))
 	r.Use(authMiddleware.OptionalAuth)                        // Check auth for rate limiting (doesn't require auth)
 	r.Use(middleware.TierRateLimit(cfg, tierRateLimiter))
 
 	// Initialize services
-	newsService := service.NewNewsService(articleRepo, redisCache)
+	// When translation is enabled, exclude articles that haven't been translated yet
+	newsService := service.NewNewsService(articleRepo, redisCache, cfg.TranslationEnabled)
 	sourceService := service.NewSourceService(sourceRepo, redisCache)
 
-	// Initialize AI services
+	// Initialize AI services with configurable models
 	aiCache := ai.NewAICache(redisCache)
 	groqClient := ai.NewGroqClient(cfg.GroqAPIKey)
-	sentimentService := ai.NewSentimentService(groqClient, aiCache)
-	summaryService := ai.NewSummaryService(groqClient, aiCache)
-	signalsService := ai.NewSignalsService(groqClient, aiCache)
+	sentimentService := ai.NewSentimentService(groqClient, aiCache, cfg.ModelSentiment)
+	summaryService := ai.NewSummaryService(groqClient, aiCache, cfg.ModelSummary)
+	signalsService := ai.NewSignalsService(groqClient, aiCache, cfg.ModelSummary)
 
 	// Initialize handlers
 	healthHandler := handlers.NewHealthChecker(db, redisCache)
@@ -60,6 +61,7 @@ func NewRouter(cfg *config.Config, db *database.DB, redisCache *cache.Redis) *ch
 	sourceHandler := handlers.NewSourceHandler(sourceService)
 	aiHandler := handlers.NewAIHandler(sentimentService, summaryService, signalsService, newsService)
 	authHandler := handlers.NewAuthHandler(userRepo, jwtService, apiKeyService)
+	statusHandler := handlers.NewStatusHandler(db, redisCache, articleRepo, cfg)
 
 	// Health endpoints
 	r.Get("/health", healthHandler.Health)
@@ -88,6 +90,9 @@ func NewRouter(cfg *config.Config, db *database.DB, redisCache *cache.Redis) *ch
 		r.Get("/ai/sentiment", aiHandler.GetSentiment)
 		r.Get("/ai/summary", aiHandler.GetSummary)
 		r.Get("/ai/signals", aiHandler.GetSignals)
+
+		// Status endpoint
+		r.Get("/status", statusHandler.GetStatus)
 
 		// Protected user endpoints (require authentication)
 		r.Route("/user", func(r chi.Router) {

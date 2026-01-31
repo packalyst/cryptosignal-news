@@ -48,13 +48,18 @@ type Article struct {
 type SentimentService struct {
 	groq  *GroqClient
 	cache *AICache
+	model string
 }
 
 // NewSentimentService creates a new sentiment service
-func NewSentimentService(groq *GroqClient, cache *AICache) *SentimentService {
+func NewSentimentService(groq *GroqClient, cache *AICache, model string) *SentimentService {
+	if model == "" {
+		model = DefaultGroqModel
+	}
 	return &SentimentService{
 		groq:  groq,
 		cache: cache,
+		model: model,
 	}
 }
 
@@ -76,7 +81,7 @@ func (s *SentimentService) AnalyzeArticle(ctx context.Context, article *Article)
 
 	// Make API request
 	req := &ChatRequest{
-		Model:       DefaultGroqModel,
+		Model:       s.model,
 		Temperature: 0.3, // Lower temperature for more consistent results
 		MaxTokens:   512,
 		Messages: []ChatMessage{
@@ -213,7 +218,7 @@ Respond with JSON only:
 {"sentiment": "bullish|bearish|neutral", "score": 0.0 to 1.0, "reasoning": "brief explanation"}`, symbol, headlines.String())
 
 	chatReq := &ChatRequest{
-		Model: "llama-3.3-70b-versatile",
+		Model: s.model,
 		Messages: []ChatMessage{
 			{Role: "user", Content: prompt},
 		},

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"regexp"
@@ -10,9 +11,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/cryptosignal-news/backend/internal/auth"
-	"github.com/cryptosignal-news/backend/internal/models"
-	"github.com/cryptosignal-news/backend/internal/repository"
+	"cryptosignal-news/backend/internal/auth"
+	"cryptosignal-news/backend/internal/models"
+	"cryptosignal-news/backend/internal/repository"
 )
 
 // AuthHandler handles authentication endpoints
@@ -277,6 +278,10 @@ func (h *AuthHandler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	// Generate the API key
 	generated, err := h.apiKeyService.Generate(r.Context(), user.ID, req.Name)
 	if err != nil {
+		if errors.Is(err, auth.ErrAPIKeyLimitReached) {
+			writeError(w, http.StatusBadRequest, "limit_reached", "Maximum API key limit reached")
+			return
+		}
 		log.Printf("[auth] CreateAPIKey error: %v", err)
 		writeError(w, http.StatusInternalServerError, "server_error", "Failed to create API key")
 		return

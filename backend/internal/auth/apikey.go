@@ -11,8 +11,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/cryptosignal-news/backend/internal/database"
-	"github.com/cryptosignal-news/backend/internal/models"
+	"cryptosignal-news/backend/internal/database"
+	"cryptosignal-news/backend/internal/models"
 )
 
 const (
@@ -29,16 +29,22 @@ var (
 	ErrAPIKeyRevoked = errors.New("api key has been revoked")
 	// ErrAPIKeyInvalid is returned when an API key format is invalid
 	ErrAPIKeyInvalid = errors.New("invalid api key format")
+	// ErrAPIKeyLimitReached is returned when user has too many API keys
+	ErrAPIKeyLimitReached = errors.New("api key limit reached")
 )
 
 // APIKeyService handles API key operations
 type APIKeyService struct {
-	db *database.DB
+	db      *database.DB
+	maxKeys int
 }
 
 // NewAPIKeyService creates a new API key service
-func NewAPIKeyService(db *database.DB) *APIKeyService {
-	return &APIKeyService{db: db}
+func NewAPIKeyService(db *database.DB, maxKeys int) *APIKeyService {
+	if maxKeys <= 0 {
+		maxKeys = 10 // default
+	}
+	return &APIKeyService{db: db, maxKeys: maxKeys}
 }
 
 // GeneratedKey contains both the plain text key (shown once) and the stored key info
@@ -49,6 +55,17 @@ type GeneratedKey struct {
 
 // Generate creates a new API key for a user
 func (s *APIKeyService) Generate(ctx context.Context, userID string, name string) (*GeneratedKey, error) {
+	// Check if user has reached the limit
+	var count int
+	countQuery := `SELECT COUNT(*) FROM api_keys WHERE user_id = $1 AND is_active = true`
+	err := s.db.QueryRow(ctx, countQuery, userID).Scan(&count)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count api keys: %w", err)
+	}
+	if count >= s.maxKeys {
+		return nil, ErrAPIKeyLimitReached
+	}
+
 	// Generate a secure random API key
 	plainKey, err := generateAPIKey()
 	if err != nil {

@@ -100,7 +100,7 @@ export default function NewsPage() {
   const categoryOptions = [
     { value: '', label: 'All Categories' },
     ...categories.map((cat) => ({
-      value: cat.key,
+      value: cat.name,
       label: `${cat.name} (${cat.count})`,
     })),
   ];

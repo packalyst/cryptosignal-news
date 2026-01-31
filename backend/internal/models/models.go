@@ -76,6 +76,12 @@ type Article struct {
 	IsBreaking     bool      `json:"is_breaking" db:"is_breaking"`
 	CreatedAt      time.Time `json:"created_at" db:"created_at"`
 
+	// Translation fields
+	OriginalTitle       string `json:"original_title,omitempty" db:"original_title"`
+	OriginalDescription string `json:"original_description,omitempty" db:"original_description"`
+	OriginalLanguage    string `json:"original_language,omitempty" db:"original_language"`
+	TranslationStatus   string `json:"translation_status,omitempty" db:"translation_status"`
+
 	// Joined fields
 	SourceName string `json:"source_name,omitempty" db:"source_name"`
 	SourceKey  string `json:"source_key,omitempty" db:"source_key"`
@@ -103,7 +109,7 @@ type ArticleResponse struct {
 	Description    string   `json:"description,omitempty"`
 	Source         string   `json:"source"`
 	SourceKey      string   `json:"source_key"`
-	Category       string   `json:"category,omitempty"`
+	Categories     []string `json:"categories,omitempty"`
 	PubDate        string   `json:"pub_date"`
 	TimeAgo        string   `json:"time_ago"`
 	Sentiment      string   `json:"sentiment,omitempty"`
@@ -112,8 +118,14 @@ type ArticleResponse struct {
 	IsBreaking     bool     `json:"is_breaking"`
 }
 
-// ToResponse converts an Article to ArticleResponse
+// ToResponse converts an Article to ArticleResponse (shows all categories)
 func (a *Article) ToResponse() ArticleResponse {
+	return a.ToResponseWithFilter(nil)
+}
+
+// ToResponseWithFilter converts an Article to ArticleResponse
+// If filterCategories is provided, only shows categories that match the filter
+func (a *Article) ToResponseWithFilter(filterCategories []string) ArticleResponse {
 	resp := ArticleResponse{
 		ID:             a.ID,
 		Title:          a.Title,
@@ -131,8 +143,27 @@ func (a *Article) ToResponse() ArticleResponse {
 	if len(a.MentionedCoins) > 0 {
 		resp.MentionedCoins = a.MentionedCoins
 	}
+
 	if len(a.Categories) > 0 {
-		resp.Category = a.Categories[0]
+		if len(filterCategories) > 0 {
+			// Only include categories that match the filter
+			filterSet := make(map[string]bool, len(filterCategories))
+			for _, fc := range filterCategories {
+				filterSet[fc] = true
+			}
+			matched := []string{}
+			for _, cat := range a.Categories {
+				if filterSet[cat] {
+					matched = append(matched, cat)
+				}
+			}
+			if len(matched) > 0 {
+				resp.Categories = matched
+			}
+		} else {
+			// No filter, show all categories
+			resp.Categories = a.Categories
+		}
 	}
 
 	return resp
@@ -205,18 +236,35 @@ func (s *Source) GetBackoffDuration() time.Duration {
 	return time.Duration(minutes) * time.Minute
 }
 
+// Translation status constants
+const (
+	TranslationNone      = "none"      // English, no translation needed
+	TranslationPending   = "pending"   // Needs translation
+	TranslationCompleted = "completed" // Successfully translated
+	TranslationFailed    = "failed"    // Translation failed
+)
+
 // NewArticle creates a new article with sensible defaults
 func NewArticle(sourceID int, guid, title, link string, pubDate time.Time) *Article {
 	return &Article{
-		SourceID:       sourceID,
-		GUID:           guid,
-		Title:          title,
-		Link:           link,
-		PubDate:        pubDate,
-		Categories:     []string{},
-		MentionedCoins: []string{},
-		CreatedAt:      time.Now().UTC(),
+		SourceID:          sourceID,
+		GUID:              guid,
+		Title:             title,
+		Link:              link,
+		PubDate:           pubDate,
+		Categories:        []string{},
+		MentionedCoins:    []string{},
+		TranslationStatus: TranslationNone,
+		CreatedAt:         time.Now().UTC(),
 	}
+}
+
+// SetForTranslation marks an article as needing translation and stores originals
+func (a *Article) SetForTranslation(language string) {
+	a.OriginalTitle = a.Title
+	a.OriginalDescription = a.Description
+	a.OriginalLanguage = language
+	a.TranslationStatus = TranslationPending
 }
 
 // SetDescription sets and sanitizes the article description

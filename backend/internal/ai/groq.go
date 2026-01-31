@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -174,6 +175,14 @@ func (c *GroqClient) doRequest(ctx context.Context, req *ChatRequest) (*ChatResp
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		// Parse retry-after header if present
+		var retryAfter time.Duration
+		if retryStr := resp.Header.Get("retry-after"); retryStr != "" {
+			if seconds, err := strconv.Atoi(retryStr); err == nil {
+				retryAfter = time.Duration(seconds) * time.Second
+			}
+		}
+
 		var groqErr GroqError
 		if err := json.Unmarshal(respBody, &groqErr); err == nil && groqErr.Error.Message != "" {
 			return nil, &APIError{
@@ -181,11 +190,13 @@ func (c *GroqClient) doRequest(ctx context.Context, req *ChatRequest) (*ChatResp
 				Message:    groqErr.Error.Message,
 				Type:       groqErr.Error.Type,
 				Code:       groqErr.Error.Code,
+				RetryAfter: retryAfter,
 			}
 		}
 		return nil, &APIError{
 			StatusCode: resp.StatusCode,
 			Message:    string(respBody),
+			RetryAfter: retryAfter,
 		}
 	}
 
@@ -203,6 +214,7 @@ type APIError struct {
 	Message    string
 	Type       string
 	Code       string
+	RetryAfter time.Duration // How long to wait before retrying (from retry-after header)
 }
 
 func (e *APIError) Error() string {

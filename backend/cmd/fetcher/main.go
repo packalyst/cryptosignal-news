@@ -9,11 +9,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cryptosignal-news/backend/internal/cache"
-	"github.com/cryptosignal-news/backend/internal/config"
-	"github.com/cryptosignal-news/backend/internal/database"
-	"github.com/cryptosignal-news/backend/internal/fetcher"
-	"github.com/cryptosignal-news/backend/internal/sources"
+	"cryptosignal-news/backend/internal/ai"
+	"cryptosignal-news/backend/internal/cache"
+	"cryptosignal-news/backend/internal/config"
+	"cryptosignal-news/backend/internal/database"
+	"cryptosignal-news/backend/internal/fetcher"
+	"cryptosignal-news/backend/internal/repository"
+	"cryptosignal-news/backend/internal/sources"
 )
 
 func main() {
@@ -53,12 +55,13 @@ func main() {
 
 	// Create fetcher with configuration
 	fetcherCfg := &fetcher.Config{
-		WorkerCount:   getEnvInt("FETCHER_WORKERS", 50),
-		Timeout:       getEnvDuration("FETCHER_TIMEOUT", 10*time.Second),
-		MaxArticleAge: getEnvDuration("FETCHER_MAX_AGE", 7*24*time.Hour),
+		WorkerCount:    getEnvInt("FETCHER_WORKERS", 50),
+		Timeout:        getEnvDuration("FETCHER_TIMEOUT", 10*time.Second),
+		MaxArticleAge:  getEnvDuration("FETCHER_MAX_AGE", 7*24*time.Hour),
+		TargetLanguage: cfg.TranslationTargetLanguage, // Empty if translation disabled
 	}
-	log.Printf("Fetcher config: workers=%d, timeout=%v, max_age=%v",
-		fetcherCfg.WorkerCount, fetcherCfg.Timeout, fetcherCfg.MaxArticleAge)
+	log.Printf("Fetcher config: workers=%d, timeout=%v, max_age=%v, target_lang=%s",
+		fetcherCfg.WorkerCount, fetcherCfg.Timeout, fetcherCfg.MaxArticleAge, fetcherCfg.TargetLanguage)
 
 	f := fetcher.New(db, redis, fetcherCfg)
 
@@ -70,6 +73,25 @@ func main() {
 
 	scheduler := fetcher.NewScheduler(f, schedulerCfg)
 
+	// Create translation worker if Groq API key is set
+	var translatorWorker *fetcher.TranslatorWorker
+	if cfg.GroqAPIKey != "" {
+		groqClient := ai.NewGroqClient(cfg.GroqAPIKey)
+		translator := ai.NewTranslatorService(groqClient, nil, cfg.ModelTranslation)
+		articleRepo := repository.NewArticleRepository(db)
+
+		translatorCfg := &fetcher.TranslatorWorkerConfig{
+			Interval:  getEnvDuration("TRANSLATION_INTERVAL", 30*time.Second),
+			BatchSize: getEnvInt("TRANSLATION_BATCH_SIZE", 5),
+		}
+
+		translatorWorker = fetcher.NewTranslatorWorker(translator, articleRepo, translatorCfg)
+		log.Printf("Translation worker config: interval=%v, batch_size=%d",
+			translatorCfg.Interval, translatorCfg.BatchSize)
+	} else {
+		log.Println("Translation disabled: GROQ_API_KEY not set")
+	}
+
 	// Set up graceful shutdown
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, os.Interrupt, syscall.SIGTERM)
@@ -78,6 +100,13 @@ func main() {
 	go func() {
 		scheduler.Start(ctx)
 	}()
+
+	// Start translation worker if configured
+	if translatorWorker != nil {
+		go func() {
+			translatorWorker.Start(ctx)
+		}()
+	}
 
 	log.Println("Fetcher worker started successfully")
 	log.Printf("Fetching feeds every %v", schedulerCfg.Interval)
@@ -91,6 +120,11 @@ func main() {
 
 	// Stop the scheduler
 	scheduler.Stop()
+
+	// Stop the translation worker
+	if translatorWorker != nil {
+		translatorWorker.Stop()
+	}
 
 	// Cancel context to stop any in-flight operations
 	cancel()

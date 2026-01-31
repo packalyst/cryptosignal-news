@@ -3,10 +3,10 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/cryptosignal-news/backend/internal/api/response"
-	"github.com/cryptosignal-news/backend/internal/cache"
-	"github.com/cryptosignal-news/backend/internal/middleware"
-	"github.com/cryptosignal-news/backend/internal/service"
+	"cryptosignal-news/backend/internal/api/response"
+	"cryptosignal-news/backend/internal/cache"
+	"cryptosignal-news/backend/internal/middleware"
+	"cryptosignal-news/backend/internal/service"
 )
 
 // SourceHandler handles source-related HTTP requests

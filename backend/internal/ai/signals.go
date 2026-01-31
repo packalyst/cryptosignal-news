@@ -30,13 +30,18 @@ type SignalsResult struct {
 type SignalsService struct {
 	groq  *GroqClient
 	cache *AICache
+	model string
 }
 
 // NewSignalsService creates a new signals service
-func NewSignalsService(groq *GroqClient, cache *AICache) *SignalsService {
+func NewSignalsService(groq *GroqClient, cache *AICache, model string) *SignalsService {
+	if model == "" {
+		model = DefaultGroqModel
+	}
 	return &SignalsService{
 		groq:  groq,
 		cache: cache,
+		model: model,
 	}
 }
 
@@ -74,7 +79,7 @@ func (s *SignalsService) GenerateSignals(ctx context.Context, articles []Article
 
 	// Make API request
 	req := &ChatRequest{
-		Model:       DefaultGroqModel,
+		Model:       s.model,
 		Temperature: 0.4,
 		MaxTokens:   1024,
 		Messages: []ChatMessage{

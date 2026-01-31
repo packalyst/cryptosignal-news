@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cryptosignal-news/backend/internal/models"
-	"github.com/cryptosignal-news/backend/internal/sources"
+	"cryptosignal-news/backend/internal/models"
+	"cryptosignal-news/backend/internal/sources"
 )
 
 // WorkerPool manages concurrent feed fetching

@@ -1,7 +1,7 @@
 package sources
 
 import (
-	"github.com/cryptosignal-news/backend/internal/models"
+	"cryptosignal-news/backend/internal/models"
 )
 
 // Source represents an RSS feed source that can be fetched
@@ -20,6 +20,9 @@ type Source interface {
 
 	// GetCategory returns the source category
 	GetCategory() string
+
+	// GetLanguage returns the source language (ISO 639-1 code)
+	GetLanguage() string
 
 	// IsEnabled returns whether the source is active
 	IsEnabled() bool
@@ -58,6 +61,11 @@ func (s *DBSource) GetURL() string {
 // GetCategory returns the source category
 func (s *DBSource) GetCategory() string {
 	return s.Category
+}
+
+// GetLanguage returns the source language (ISO 639-1 code)
+func (s *DBSource) GetLanguage() string {
+	return s.Language
 }
 
 // IsEnabled returns whether the source is active

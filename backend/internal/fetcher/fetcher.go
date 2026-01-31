@@ -4,43 +4,47 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
-	"github.com/cryptosignal-news/backend/internal/cache"
-	"github.com/cryptosignal-news/backend/internal/database"
-	"github.com/cryptosignal-news/backend/internal/models"
-	"github.com/cryptosignal-news/backend/internal/parser"
-	"github.com/cryptosignal-news/backend/internal/repository"
-	"github.com/cryptosignal-news/backend/internal/sources"
+	"cryptosignal-news/backend/internal/cache"
+	"cryptosignal-news/backend/internal/database"
+	"cryptosignal-news/backend/internal/models"
+	"cryptosignal-news/backend/internal/parser"
+	"cryptosignal-news/backend/internal/repository"
+	"cryptosignal-news/backend/internal/sources"
 )
 
 // Fetcher orchestrates the fetching of RSS feeds
 type Fetcher struct {
-	db            *database.DB
-	cache         *cache.Redis
-	parser        *parser.FeedParser
-	cleaner       *parser.Cleaner
-	enricher      *Enricher
-	articleRepo   *repository.ArticleRepository
-	sourceRepo    *repository.SourceRepository
-	workerPool    *WorkerPool
-	timeout       time.Duration
-	maxArticleAge time.Duration
+	db             *database.DB
+	cache          *cache.Redis
+	parser         *parser.FeedParser
+	cleaner        *parser.Cleaner
+	enricher       *Enricher
+	articleRepo    *repository.ArticleRepository
+	sourceRepo     *repository.SourceRepository
+	workerPool     *WorkerPool
+	timeout        time.Duration
+	maxArticleAge  time.Duration
+	targetLanguage string // Target language for translations (empty = no translation)
 }
 
 // Config holds fetcher configuration
 type Config struct {
-	WorkerCount   int
-	Timeout       time.Duration
-	MaxArticleAge time.Duration
+	WorkerCount    int
+	Timeout        time.Duration
+	MaxArticleAge  time.Duration
+	TargetLanguage string // Target language for translations (e.g., "en", "ro"). Empty = no translation.
 }
 
 // DefaultConfig returns sensible default configuration
 func DefaultConfig() *Config {
 	return &Config{
-		WorkerCount:   50,
-		Timeout:       10 * time.Second,
-		MaxArticleAge: 7 * 24 * time.Hour, // 7 days
+		WorkerCount:    50,
+		Timeout:        10 * time.Second,
+		MaxArticleAge:  7 * 24 * time.Hour, // 7 days
+		TargetLanguage: "",                 // No translation by default
 	}
 }
 
@@ -69,16 +73,17 @@ func New(db *database.DB, cache *cache.Redis, cfg *Config) *Fetcher {
 	}
 
 	return &Fetcher{
-		db:            db,
-		cache:         cache,
-		parser:        parser.NewFeedParser(),
-		cleaner:       parser.NewCleaner(),
-		enricher:      NewEnricher(),
-		articleRepo:   repository.NewArticleRepository(db),
-		sourceRepo:    repository.NewSourceRepository(db),
-		workerPool:    NewWorkerPool(cfg.WorkerCount),
-		timeout:       cfg.Timeout,
-		maxArticleAge: cfg.MaxArticleAge,
+		db:             db,
+		cache:          cache,
+		parser:         parser.NewFeedParser(),
+		cleaner:        parser.NewCleaner(),
+		enricher:       NewEnricher(),
+		articleRepo:    repository.NewArticleRepository(db),
+		sourceRepo:     repository.NewSourceRepository(db),
+		workerPool:     NewWorkerPool(cfg.WorkerCount),
+		timeout:        cfg.Timeout,
+		maxArticleAge:  cfg.MaxArticleAge,
+		targetLanguage: strings.ToLower(cfg.TargetLanguage),
 	}
 }
 
@@ -191,26 +196,38 @@ func (f *Fetcher) FetchSource(ctx context.Context, src sources.Source) ([]models
 	articles := make([]models.Article, 0, len(feed.Items))
 	minDate := time.Now().UTC().Add(-f.maxArticleAge)
 
+	// Check if this source needs translation
+	// Translation is needed if: target language is set AND source language differs from target
+	sourceLang := strings.ToLower(src.GetLanguage())
+	needsTranslation := f.targetLanguage != "" && sourceLang != "" && sourceLang != f.targetLanguage
+
 	for _, item := range feed.Items {
 		// Skip old articles
 		if item.PubDate.Before(minDate) {
 			continue
 		}
 
+		title := f.cleaner.SanitizeForDB(item.Title, 1000)
+		desc := item.GetCleanDescription(f.cleaner, 5000)
+
 		article := models.NewArticle(
 			src.GetID(),
 			item.GUID,
-			f.cleaner.SanitizeForDB(item.Title, 1000),
+			title,
 			item.Link,
 			item.PubDate,
 		)
 
-		// Clean and set description
-		desc := item.GetCleanDescription(f.cleaner, 5000)
+		// Set description
 		article.SetDescription(desc)
 
 		// Set categories
 		article.SetCategories(item.Categories)
+
+		// Mark for translation if non-English source
+		if needsTranslation {
+			article.SetForTranslation(sourceLang)
+		}
 
 		// Enrich article
 		f.enricher.EnrichArticle(article, src.GetCategory())

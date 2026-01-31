@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"runtime/debug"
 
-	"github.com/cryptosignal-news/backend/internal/api/response"
+	"cryptosignal-news/backend/internal/api/response"
 )
 
 // Recoverer is a middleware that recovers from panics

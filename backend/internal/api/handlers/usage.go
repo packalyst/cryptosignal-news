@@ -3,10 +3,10 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/cryptosignal-news/backend/internal/auth"
-	"github.com/cryptosignal-news/backend/internal/models"
-	"github.com/cryptosignal-news/backend/internal/ratelimit"
-	"github.com/cryptosignal-news/backend/internal/repository"
+	"cryptosignal-news/backend/internal/auth"
+	"cryptosignal-news/backend/internal/models"
+	"cryptosignal-news/backend/internal/ratelimit"
+	"cryptosignal-news/backend/internal/repository"
 )
 
 // UsageHandler handles usage tracking endpoints

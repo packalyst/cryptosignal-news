@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/cryptosignal-news/backend/internal/auth"
-	"github.com/cryptosignal-news/backend/internal/cache"
-	"github.com/cryptosignal-news/backend/internal/models"
+	"cryptosignal-news/backend/internal/auth"
+	"cryptosignal-news/backend/internal/cache"
+	"cryptosignal-news/backend/internal/models"
 )
 
 // Limit defines rate limits for a tier

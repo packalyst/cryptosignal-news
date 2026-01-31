@@ -3,36 +3,39 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
-	"github.com/cryptosignal-news/backend/internal/cache"
-	"github.com/cryptosignal-news/backend/internal/models"
-	"github.com/cryptosignal-news/backend/internal/repository"
+	"cryptosignal-news/backend/internal/cache"
+	"cryptosignal-news/backend/internal/models"
+	"cryptosignal-news/backend/internal/repository"
 )
 
 // NewsService handles business logic for news operations
 type NewsService struct {
-	repo  *repository.ArticleRepository
-	cache *cache.Redis
+	repo                 *repository.ArticleRepository
+	cache                *cache.Redis
+	excludeUntranslated  bool
 }
 
 // NewNewsService creates a new news service
-func NewNewsService(repo *repository.ArticleRepository, cache *cache.Redis) *NewsService {
+func NewNewsService(repo *repository.ArticleRepository, cache *cache.Redis, excludeUntranslated bool) *NewsService {
 	return &NewsService{
-		repo:  repo,
-		cache: cache,
+		repo:                repo,
+		cache:               cache,
+		excludeUntranslated: excludeUntranslated,
 	}
 }
 
 // ListOptions defines options for listing articles
 type ListOptions struct {
-	Limit    int
-	Offset   int
-	Source   string
-	Category string
-	Language string
-	From     *time.Time
-	To       *time.Time
+	Limit      int
+	Offset     int
+	Source     string
+	Categories []string // Filter by multiple categories (comma-separated in API)
+	Language   string
+	From       *time.Time
+	To         *time.Time
 }
 
 // NewsResult contains the result of a news list operation
@@ -43,8 +46,9 @@ type NewsResult struct {
 
 // GetLatest returns the latest news articles
 func (s *NewsService) GetLatest(ctx context.Context, opts ListOptions) (*NewsResult, error) {
-	// Generate cache key
-	cacheKey := cache.GenerateCacheKey("news:latest", opts.Limit, opts.Offset, opts.Source, opts.Category, opts.Language)
+	// Generate cache key (include categories as joined string for cache key)
+	categoriesKey := strings.Join(opts.Categories, ",")
+	cacheKey := cache.GenerateCacheKey("news:latest", opts.Limit, opts.Offset, opts.Source, categoriesKey, opts.Language)
 
 	// Try to get from cache
 	if cached, err := s.cache.Get(ctx, cacheKey); err == nil && cached != "" {
@@ -56,13 +60,14 @@ func (s *NewsService) GetLatest(ctx context.Context, opts ListOptions) (*NewsRes
 
 	// Query from database
 	repoOpts := repository.ListOptions{
-		Limit:    opts.Limit,
-		Offset:   opts.Offset,
-		Source:   opts.Source,
-		Category: opts.Category,
-		Language: opts.Language,
-		From:     opts.From,
-		To:       opts.To,
+		Limit:               opts.Limit,
+		Offset:              opts.Offset,
+		Source:              opts.Source,
+		Categories:          opts.Categories,
+		Language:            opts.Language,
+		From:                opts.From,
+		To:                  opts.To,
+		ExcludeUntranslated: s.excludeUntranslated,
 	}
 
 	listResult, err := s.repo.List(ctx, repoOpts)
@@ -70,10 +75,10 @@ func (s *NewsService) GetLatest(ctx context.Context, opts ListOptions) (*NewsRes
 		return nil, err
 	}
 
-	// Convert to response format
+	// Convert to response format (pass filter categories to show only matched ones)
 	articles := make([]models.ArticleResponse, len(listResult.Articles))
 	for i, a := range listResult.Articles {
-		articles[i] = a.ToResponse()
+		articles[i] = a.ToResponseWithFilter(opts.Categories)
 	}
 
 	result := &NewsResult{
@@ -103,7 +108,7 @@ func (s *NewsService) GetBreaking(ctx context.Context, limit int) ([]models.Arti
 	}
 
 	// Query from database
-	articles, err := s.repo.GetBreaking(ctx, limit)
+	articles, err := s.repo.GetBreaking(ctx, limit, s.excludeUntranslated)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +141,7 @@ func (s *NewsService) Search(ctx context.Context, query string, limit int) ([]mo
 	}
 
 	// Query from database
-	articles, err := s.repo.Search(ctx, query, limit)
+	articles, err := s.repo.Search(ctx, query, limit, s.excludeUntranslated)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +207,7 @@ func (s *NewsService) GetByCoin(ctx context.Context, symbol string, limit int) (
 	}
 
 	// Query from database
-	articles, err := s.repo.GetByCoin(ctx, symbol, limit)
+	articles, err := s.repo.GetByCoin(ctx, symbol, limit, s.excludeUntranslated)
 	if err != nil {
 		return nil, err
 	}

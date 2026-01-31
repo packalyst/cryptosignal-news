@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cryptosignal-news/backend/internal/ai"
-	"github.com/cryptosignal-news/backend/internal/api/response"
-	"github.com/cryptosignal-news/backend/internal/models"
-	"github.com/cryptosignal-news/backend/internal/service"
+	"cryptosignal-news/backend/internal/ai"
+	"cryptosignal-news/backend/internal/api/response"
+	"cryptosignal-news/backend/internal/models"
+	"cryptosignal-news/backend/internal/service"
 )
 
 // AIHandler handles AI-related API endpoints
@@ -68,6 +68,12 @@ func (h *AIHandler) GetSentiment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate coin symbol length (typical symbols are 2-10 chars)
+	if len(coin) > 10 {
+		response.BadRequest(w, "invalid coin symbol")
+		return
+	}
+
 	// Get recent articles mentioning this coin
 	articles, err := h.newsService.GetByCoin(ctx, coin, 50)
 	if err != nil {
@@ -88,21 +94,20 @@ func (h *AIHandler) GetSentiment(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, sentiment)
 }
 
+// SummaryResponse wraps market summary with the articles used
+type SummaryResponse struct {
+	*ai.MarketSummary
+	Articles []models.ArticleResponse `json:"articles"`
+}
+
 // GetSummary handles GET /api/v1/ai/summary
-// Returns daily market summary (cached 1 hour)
+// Returns daily market summary with the 20 articles used
 func (h *AIHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Try to get cached summary first
-	summary, err := h.summaryService.GetCachedSummary(ctx)
-	if err == nil && summary != nil {
-		response.Success(w, summary)
-		return
-	}
-
-	// Get recent articles for summary
+	// Get latest 20 articles for summary
 	opts := service.ListOptions{
-		Limit:  100,
+		Limit:  20,
 		Offset: 0,
 	}
 	result, err := h.newsService.GetLatest(ctx, opts)
@@ -111,27 +116,23 @@ func (h *AIHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Filter to last 24 hours
-	cutoff := time.Now().Add(-24 * time.Hour)
-	var recentArticles []models.ArticleResponse
-	for _, article := range result.Articles {
-		pubDate, err := time.Parse(time.RFC3339, article.PubDate)
-		if err == nil && pubDate.After(cutoff) {
-			recentArticles = append(recentArticles, article)
+	// Try to get cached summary first
+	summary, err := h.summaryService.GetCachedSummary(ctx)
+	if err != nil || summary == nil {
+		// Convert to AI articles and generate summary
+		aiArticles := convertToAIArticles(result.Articles)
+		summary, err = h.summaryService.GenerateDailySummary(ctx, aiArticles)
+		if err != nil {
+			response.InternalError(w, "failed to generate summary")
+			return
 		}
 	}
 
-	// Convert to AI articles
-	aiArticles := convertToAIArticles(recentArticles)
-
-	// Generate summary
-	summary, err = h.summaryService.GenerateDailySummary(ctx, aiArticles)
-	if err != nil {
-		response.InternalError(w, "failed to generate summary")
-		return
-	}
-
-	response.Success(w, summary)
+	// Return summary with articles
+	response.Success(w, SummaryResponse{
+		MarketSummary: summary,
+		Articles:      result.Articles,
+	})
 }
 
 // GetSignals handles GET /api/v1/ai/signals
@@ -143,6 +144,12 @@ func (h *AIHandler) GetSignals(w http.ResponseWriter, r *http.Request) {
 	coin := strings.ToUpper(r.URL.Query().Get("coin"))
 	direction := strings.ToLower(r.URL.Query().Get("direction"))
 	minStrength := strings.ToLower(r.URL.Query().Get("min_strength"))
+
+	// Validate optional coin parameter
+	if coin != "" && len(coin) > 10 {
+		response.BadRequest(w, "invalid coin symbol")
+		return
+	}
 
 	// Try to get cached signals first
 	signals, err := h.signalsService.GetCachedSignals(ctx)

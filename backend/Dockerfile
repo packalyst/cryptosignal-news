@@ -28,7 +28,8 @@ WORKDIR /app
 COPY --from=builder /build/api /app/api
 COPY --from=builder /build/migrations /app/migrations
 
-RUN chown -R appuser:appgroup /app
+RUN mkdir -p /app/secrets && \
+    chown -R appuser:appgroup /app
 
 USER appuser
 

@@ -9,10 +9,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cryptosignal-news/backend/internal/api"
-	"github.com/cryptosignal-news/backend/internal/cache"
-	"github.com/cryptosignal-news/backend/internal/config"
-	"github.com/cryptosignal-news/backend/internal/database"
+	"cryptosignal-news/backend/internal/api"
+	"cryptosignal-news/backend/internal/cache"
+	"cryptosignal-news/backend/internal/config"
+	"cryptosignal-news/backend/internal/database"
 )
 
 func main() {

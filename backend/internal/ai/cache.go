@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cryptosignal-news/backend/internal/cache"
+	"cryptosignal-news/backend/internal/cache"
 )
 
 const (

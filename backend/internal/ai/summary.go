@@ -23,13 +23,18 @@ type MarketSummary struct {
 type SummaryService struct {
 	groq  *GroqClient
 	cache *AICache
+	model string
 }
 
 // NewSummaryService creates a new summary service
-func NewSummaryService(groq *GroqClient, cache *AICache) *SummaryService {
+func NewSummaryService(groq *GroqClient, cache *AICache, model string) *SummaryService {
+	if model == "" {
+		model = DefaultGroqModel
+	}
 	return &SummaryService{
 		groq:  groq,
 		cache: cache,
+		model: model,
 	}
 }
 
@@ -70,7 +75,7 @@ func (s *SummaryService) GenerateDailySummary(ctx context.Context, articles []Ar
 
 	// Make API request
 	req := &ChatRequest{
-		Model:       DefaultGroqModel,
+		Model:       s.model,
 		Temperature: 0.5,
 		MaxTokens:   2048,
 		Messages: []ChatMessage{

@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cryptosignal-news/backend/internal/api/response"
-	"github.com/cryptosignal-news/backend/internal/auth"
-	"github.com/cryptosignal-news/backend/internal/config"
+	"cryptosignal-news/backend/internal/api/response"
+	"cryptosignal-news/backend/internal/auth"
+	"cryptosignal-news/backend/internal/config"
 )
 
 // RateLimiter implements a simple in-memory rate limiter
@@ -103,10 +103,11 @@ func (rl *RateLimiter) RemainingRequests(ip string) int {
 
 // RateLimit creates a middleware that limits requests by IP address
 // Default: 10 requests per minute for free tier
+// Note: Does not trust proxy headers - use TierRateLimit with config for proxy support
 func RateLimit(limiter *RateLimiter) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip := getClientIP(r)
+			ip := getClientIP(r, false) // Don't trust proxy headers
 
 			if !limiter.Allow(ip) {
 				w.Header().Set("X-RateLimit-Limit", "10")
@@ -126,26 +127,29 @@ func RateLimit(limiter *RateLimiter) func(next http.Handler) http.Handler {
 }
 
 // getClientIP extracts the client IP address from the request
-func getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header first (for proxies)
-	xff := r.Header.Get("X-Forwarded-For")
-	if xff != "" {
-		// Take the first IP in the chain
-		for i := 0; i < len(xff); i++ {
-			if xff[i] == ',' {
-				return xff[:i]
+// Only trusts X-Forwarded-For/X-Real-IP headers if trustProxy is true
+func getClientIP(r *http.Request, trustProxy bool) string {
+	if trustProxy {
+		// Check X-Forwarded-For header (for proxies)
+		xff := r.Header.Get("X-Forwarded-For")
+		if xff != "" {
+			// Take the first IP in the chain
+			for i := 0; i < len(xff); i++ {
+				if xff[i] == ',' {
+					return xff[:i]
+				}
 			}
+			return xff
 		}
-		return xff
+
+		// Check X-Real-IP header
+		xri := r.Header.Get("X-Real-IP")
+		if xri != "" {
+			return xri
+		}
 	}
 
-	// Check X-Real-IP header
-	xri := r.Header.Get("X-Real-IP")
-	if xri != "" {
-		return xri
-	}
-
-	// Fall back to RemoteAddr
+	// Use RemoteAddr (direct connection IP)
 	// RemoteAddr is in the form "IP:port"
 	addr := r.RemoteAddr
 	for i := len(addr) - 1; i >= 0; i-- {
@@ -264,7 +268,7 @@ func TierRateLimit(cfg *config.Config, limiter *TierRateLimiter) func(next http.
 				tier = user.Tier
 			} else {
 				// Anonymous - use IP address
-				identifier = "ip:" + getClientIP(r)
+				identifier = "ip:" + getClientIP(r, cfg.TrustProxy)
 				tier = "anonymous"
 			}
 

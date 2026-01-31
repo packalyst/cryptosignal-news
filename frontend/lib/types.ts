@@ -43,7 +43,6 @@ export interface Source {
 }
 
 export interface Category {
-  key: string;
   name: string;
   count: number;
 }

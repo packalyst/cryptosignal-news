@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cryptosignal-news/backend/internal/api/response"
-	"github.com/cryptosignal-news/backend/internal/cache"
-	"github.com/cryptosignal-news/backend/internal/database"
+	"cryptosignal-news/backend/internal/api/response"
+	"cryptosignal-news/backend/internal/cache"
+	"cryptosignal-news/backend/internal/database"
 )
 
 // HealthChecker provides health check functionality

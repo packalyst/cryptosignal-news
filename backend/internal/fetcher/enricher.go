@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cryptosignal-news/backend/internal/models"
+	"cryptosignal-news/backend/internal/models"
 )
 
 // CoinPattern represents a cryptocurrency to detect in text

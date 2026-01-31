@@ -9,8 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/cryptosignal-news/backend/internal/database"
-	"github.com/cryptosignal-news/backend/internal/models"
+	"cryptosignal-news/backend/internal/database"
+	"cryptosignal-news/backend/internal/models"
 )
 
 // sanitizeUTF8 removes invalid UTF8 sequences from a string
@@ -44,13 +44,14 @@ func NewArticleRepository(db *database.DB) *ArticleRepository {
 
 // ListOptions defines options for listing articles
 type ListOptions struct {
-	Limit    int
-	Offset   int
-	Source   string
-	Category string
-	Language string
-	From     *time.Time
-	To       *time.Time
+	Limit              int
+	Offset             int
+	Source             string
+	Categories         []string // Filter by multiple categories (OR logic)
+	Language           string
+	From               *time.Time
+	To                 *time.Time
+	ExcludeUntranslated bool // If true, exclude articles with translation_status = 'pending' or 'failed'
 }
 
 // ListResult contains articles and total count
@@ -71,9 +72,10 @@ func (r *ArticleRepository) List(ctx context.Context, opts ListOptions) (*ListRe
 		argNum++
 	}
 
-	if opts.Category != "" {
-		conditions = append(conditions, fmt.Sprintf("$%d = ANY(a.categories)", argNum))
-		args = append(args, opts.Category)
+	if len(opts.Categories) > 0 {
+		// Use array overlap operator to match articles that have ANY of the requested categories
+		conditions = append(conditions, fmt.Sprintf("a.categories && $%d::text[]", argNum))
+		args = append(args, opts.Categories)
 		argNum++
 	}
 
@@ -93,6 +95,11 @@ func (r *ArticleRepository) List(ctx context.Context, opts ListOptions) (*ListRe
 		conditions = append(conditions, fmt.Sprintf("a.pub_date <= $%d", argNum))
 		args = append(args, *opts.To)
 		argNum++
+	}
+
+	// Exclude untranslated articles if translation filtering is enabled
+	if opts.ExcludeUntranslated {
+		conditions = append(conditions, "(a.translation_status IS NULL OR a.translation_status IN ('none', 'completed'))")
 	}
 
 	whereClause := strings.Join(conditions, " AND ")
@@ -140,13 +147,20 @@ func (r *ArticleRepository) List(ctx context.Context, opts ListOptions) (*ListRe
 	}, nil
 }
 
-// Search performs full-text search on articles
-func (r *ArticleRepository) Search(ctx context.Context, queryStr string, limit int) ([]models.Article, error) {
+// Search performs full-text search on articles using PostgreSQL's text search
+func (r *ArticleRepository) Search(ctx context.Context, queryStr string, limit int, excludeUntranslated bool) ([]models.Article, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 
-	rows, err := r.db.Query(ctx, `
+	// Build query with optional translation filter
+	translationFilter := ""
+	if excludeUntranslated {
+		translationFilter = " AND (a.translation_status IS NULL OR a.translation_status IN ('none', 'completed'))"
+	}
+
+	// Use PostgreSQL full-text search with the GIN index
+	query := fmt.Sprintf(`
 		SELECT
 			a.id, a.source_id, a.guid, a.title, a.link, a.description,
 			a.pub_date, a.categories, a.sentiment, a.sentiment_score,
@@ -154,9 +168,15 @@ func (r *ArticleRepository) Search(ctx context.Context, queryStr string, limit i
 			s.name as source_name, s.key as source_key
 		FROM articles a
 		JOIN sources s ON a.source_id = s.id
-		WHERE a.title ILIKE '%' || $1 || '%' OR a.description ILIKE '%' || $1 || '%'
-		ORDER BY a.pub_date DESC
-		LIMIT $2`, queryStr, limit)
+		WHERE to_tsvector('english', COALESCE(a.title, '') || ' ' || COALESCE(a.description, ''))
+			@@ plainto_tsquery('english', $1)%s
+		ORDER BY ts_rank(
+			to_tsvector('english', COALESCE(a.title, '') || ' ' || COALESCE(a.description, '')),
+			plainto_tsquery('english', $1)
+		) DESC, a.pub_date DESC
+		LIMIT $2`, translationFilter)
+
+	rows, err := r.db.Query(ctx, query, queryStr, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search articles: %w", err)
 	}
@@ -224,13 +244,13 @@ func (r *ArticleRepository) BulkInsert(ctx context.Context, articles []models.Ar
 func (r *ArticleRepository) insertBatch(ctx context.Context, articles []models.Article) (int, error) {
 	// Build the INSERT query with ON CONFLICT DO NOTHING
 	valueStrings := make([]string, 0, len(articles))
-	valueArgs := make([]interface{}, 0, len(articles)*9)
+	valueArgs := make([]interface{}, 0, len(articles)*13)
 	argIdx := 1
 
 	for _, a := range articles {
 		valueStrings = append(valueStrings,
-			fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
-				argIdx, argIdx+1, argIdx+2, argIdx+3, argIdx+4, argIdx+5, argIdx+6, argIdx+7, argIdx+8))
+			fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+				argIdx, argIdx+1, argIdx+2, argIdx+3, argIdx+4, argIdx+5, argIdx+6, argIdx+7, argIdx+8, argIdx+9, argIdx+10, argIdx+11, argIdx+12))
 		valueArgs = append(valueArgs,
 			a.SourceID,
 			sanitizeUTF8(a.GUID),
@@ -241,14 +261,18 @@ func (r *ArticleRepository) insertBatch(ctx context.Context, articles []models.A
 			a.Categories,
 			a.MentionedCoins,
 			a.IsBreaking,
+			sanitizeUTF8(a.OriginalTitle),
+			sanitizeUTF8(a.OriginalDescription),
+			a.OriginalLanguage,
+			a.TranslationStatus,
 		)
-		argIdx += 9
+		argIdx += 13
 	}
 
 	query := fmt.Sprintf(`
-		INSERT INTO articles (source_id, guid, title, link, description, pub_date, categories, mentioned_coins, is_breaking)
+		INSERT INTO articles (source_id, guid, title, link, description, pub_date, categories, mentioned_coins, is_breaking, original_title, original_description, original_language, translation_status)
 		VALUES %s
-		ON CONFLICT (guid) DO NOTHING
+		ON CONFLICT (source_id, guid) DO NOTHING
 	`, strings.Join(valueStrings, ", "))
 
 	result, err := r.db.Exec(ctx, query, valueArgs...)
@@ -257,6 +281,195 @@ func (r *ArticleRepository) insertBatch(ctx context.Context, articles []models.A
 	}
 
 	return int(result), nil
+}
+
+// GetPendingTranslations retrieves articles that need translation (includes failed for retry)
+func (r *ArticleRepository) GetPendingTranslations(ctx context.Context, limit int) ([]models.Article, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+
+	// Include 'failed' articles for retry - they might succeed after rate limit resets
+	// Prioritize 'pending' first, then 'failed'
+	rows, err := r.db.Query(ctx, `
+		SELECT
+			a.id, a.source_id, a.guid, a.title, a.link, a.description,
+			a.pub_date, a.categories, a.sentiment, a.sentiment_score,
+			a.mentioned_coins, a.is_breaking, a.created_at,
+			a.original_title, a.original_description, a.original_language, a.translation_status,
+			s.name as source_name, s.key as source_key
+		FROM articles a
+		JOIN sources s ON s.id = a.source_id
+		WHERE a.translation_status IN ('pending', 'failed')
+		ORDER BY
+			CASE WHEN a.translation_status = 'pending' THEN 0 ELSE 1 END,
+			a.id ASC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pending translations: %w", err)
+	}
+	defer rows.Close()
+
+	return r.scanArticlesWithTranslation(rows)
+}
+
+// UpdateTranslation updates an article with its translation
+func (r *ArticleRepository) UpdateTranslation(ctx context.Context, id int64, title, description, status string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE articles
+		SET title = $2, description = $3, translation_status = $4
+		WHERE id = $1
+	`, id, sanitizeUTF8(title), sanitizeUTF8(description), status)
+	if err != nil {
+		return fmt.Errorf("failed to update translation: %w", err)
+	}
+	return nil
+}
+
+// CountPendingTranslations returns the number of articles pending translation
+func (r *ArticleRepository) CountPendingTranslations(ctx context.Context) (int, error) {
+	var count int
+	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM articles WHERE translation_status = 'pending'`).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count pending translations: %w", err)
+	}
+	return count, nil
+}
+
+// TranslationStats holds translation statistics
+type TranslationStats struct {
+	TotalArticles int            `json:"total_articles"`
+	ByStatus      map[string]int `json:"by_status"`
+	ByLanguage    map[string]int `json:"by_language"`
+}
+
+// GetTranslationStats returns detailed translation statistics
+func (r *ArticleRepository) GetTranslationStats(ctx context.Context) (*TranslationStats, error) {
+	stats := &TranslationStats{
+		ByStatus:   make(map[string]int),
+		ByLanguage: make(map[string]int),
+	}
+
+	// Get total count
+	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM articles`).Scan(&stats.TotalArticles)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count articles: %w", err)
+	}
+
+	// Get counts by translation status
+	rows, err := r.db.Query(ctx, `
+		SELECT COALESCE(translation_status, 'none'), COUNT(*)
+		FROM articles
+		GROUP BY translation_status
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get translation status counts: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, err
+		}
+		stats.ByStatus[status] = count
+	}
+
+	// Get counts by original language (for non-English articles)
+	rows2, err := r.db.Query(ctx, `
+		SELECT COALESCE(original_language, 'en'), COUNT(*)
+		FROM articles
+		WHERE original_language IS NOT NULL AND original_language != ''
+		GROUP BY original_language
+		ORDER BY COUNT(*) DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get language counts: %w", err)
+	}
+	defer rows2.Close()
+
+	for rows2.Next() {
+		var lang string
+		var count int
+		if err := rows2.Scan(&lang, &count); err != nil {
+			return nil, err
+		}
+		stats.ByLanguage[lang] = count
+	}
+
+	return stats, nil
+}
+
+// scanArticlesWithTranslation scans rows including translation fields
+func (r *ArticleRepository) scanArticlesWithTranslation(rows pgx.Rows) ([]models.Article, error) {
+	articles := []models.Article{}
+
+	for rows.Next() {
+		var a models.Article
+		var sentiment, sourceName, sourceKey *string
+		var sentimentScore *float64
+		var origTitle, origDesc, origLang, transStatus *string
+
+		err := rows.Scan(
+			&a.ID,
+			&a.SourceID,
+			&a.GUID,
+			&a.Title,
+			&a.Link,
+			&a.Description,
+			&a.PubDate,
+			&a.Categories,
+			&sentiment,
+			&sentimentScore,
+			&a.MentionedCoins,
+			&a.IsBreaking,
+			&a.CreatedAt,
+			&origTitle,
+			&origDesc,
+			&origLang,
+			&transStatus,
+			&sourceName,
+			&sourceKey,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan article: %w", err)
+		}
+
+		if sentiment != nil {
+			a.Sentiment = *sentiment
+		}
+		if sentimentScore != nil {
+			a.SentimentScore = *sentimentScore
+		}
+		if sourceName != nil {
+			a.SourceName = *sourceName
+		}
+		if sourceKey != nil {
+			a.SourceKey = *sourceKey
+		}
+		if origTitle != nil {
+			a.OriginalTitle = *origTitle
+		}
+		if origDesc != nil {
+			a.OriginalDescription = *origDesc
+		}
+		if origLang != nil {
+			a.OriginalLanguage = *origLang
+		}
+		if transStatus != nil {
+			a.TranslationStatus = *transStatus
+		}
+
+		articles = append(articles, a)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating articles: %w", err)
+	}
+
+	return articles, nil
 }
 
 // Exists checks if an article with the given GUID exists
@@ -306,7 +519,7 @@ func (r *ArticleRepository) ExistsBatch(ctx context.Context, guids []string) (ma
 }
 
 // GetLatest retrieves the most recent articles
-func (r *ArticleRepository) GetLatest(ctx context.Context, limit int) ([]models.Article, error) {
+func (r *ArticleRepository) GetLatest(ctx context.Context, limit int, excludeUntranslated bool) ([]models.Article, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -314,17 +527,22 @@ func (r *ArticleRepository) GetLatest(ctx context.Context, limit int) ([]models.
 		limit = 500
 	}
 
-	rows, err := r.db.Query(ctx, `
+	query := `
 		SELECT
 			a.id, a.source_id, a.guid, a.title, a.link, a.description,
 			a.pub_date, a.categories, a.sentiment, a.sentiment_score,
 			a.mentioned_coins, a.is_breaking, a.created_at,
 			s.name as source_name, s.key as source_key
 		FROM articles a
-		JOIN sources s ON s.id = a.source_id
-		ORDER BY a.pub_date DESC
-		LIMIT $1
-	`, limit)
+		JOIN sources s ON s.id = a.source_id`
+
+	if excludeUntranslated {
+		query += ` WHERE (a.translation_status IS NULL OR a.translation_status IN ('none', 'completed'))`
+	}
+
+	query += ` ORDER BY a.pub_date DESC LIMIT $1`
+
+	rows, err := r.db.Query(ctx, query, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get latest articles: %w", err)
 	}
@@ -360,14 +578,14 @@ func (r *ArticleRepository) GetBySource(ctx context.Context, sourceID int, limit
 }
 
 // GetBreaking retrieves breaking news articles (less than 2 hours old)
-func (r *ArticleRepository) GetBreaking(ctx context.Context, limit int) ([]models.Article, error) {
+func (r *ArticleRepository) GetBreaking(ctx context.Context, limit int, excludeUntranslated bool) ([]models.Article, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 
 	twoHoursAgo := time.Now().UTC().Add(-2 * time.Hour)
 
-	rows, err := r.db.Query(ctx, `
+	query := `
 		SELECT
 			a.id, a.source_id, a.guid, a.title, a.link, a.description,
 			a.pub_date, a.categories, a.sentiment, a.sentiment_score,
@@ -375,10 +593,15 @@ func (r *ArticleRepository) GetBreaking(ctx context.Context, limit int) ([]model
 			s.name as source_name, s.key as source_key
 		FROM articles a
 		JOIN sources s ON s.id = a.source_id
-		WHERE a.pub_date >= $1 OR a.is_breaking = true
-		ORDER BY a.pub_date DESC
-		LIMIT $2
-	`, twoHoursAgo, limit)
+		WHERE (a.pub_date >= $1 OR a.is_breaking = true)`
+
+	if excludeUntranslated {
+		query += ` AND (a.translation_status IS NULL OR a.translation_status IN ('none', 'completed'))`
+	}
+
+	query += ` ORDER BY a.pub_date DESC LIMIT $2`
+
+	rows, err := r.db.Query(ctx, query, twoHoursAgo, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get breaking articles: %w", err)
 	}
@@ -388,12 +611,12 @@ func (r *ArticleRepository) GetBreaking(ctx context.Context, limit int) ([]model
 }
 
 // GetByCoin retrieves articles mentioning a specific cryptocurrency
-func (r *ArticleRepository) GetByCoin(ctx context.Context, coin string, limit int) ([]models.Article, error) {
+func (r *ArticleRepository) GetByCoin(ctx context.Context, coin string, limit int, excludeUntranslated bool) ([]models.Article, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 
-	rows, err := r.db.Query(ctx, `
+	query := `
 		SELECT
 			a.id, a.source_id, a.guid, a.title, a.link, a.description,
 			a.pub_date, a.categories, a.sentiment, a.sentiment_score,
@@ -401,10 +624,15 @@ func (r *ArticleRepository) GetByCoin(ctx context.Context, coin string, limit in
 			s.name as source_name, s.key as source_key
 		FROM articles a
 		JOIN sources s ON s.id = a.source_id
-		WHERE $1 = ANY(a.mentioned_coins)
-		ORDER BY a.pub_date DESC
-		LIMIT $2
-	`, strings.ToUpper(coin), limit)
+		WHERE $1 = ANY(a.mentioned_coins)`
+
+	if excludeUntranslated {
+		query += ` AND (a.translation_status IS NULL OR a.translation_status IN ('none', 'completed'))`
+	}
+
+	query += ` ORDER BY a.pub_date DESC LIMIT $2`
+
+	rows, err := r.db.Query(ctx, query, strings.ToUpper(coin), limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get articles by coin: %w", err)
 	}
@@ -440,7 +668,7 @@ func (r *ArticleRepository) CountBySource(ctx context.Context, since time.Time) 
 
 // scanArticles scans rows into article structs
 func (r *ArticleRepository) scanArticles(rows pgx.Rows) ([]models.Article, error) {
-	var articles []models.Article
+	articles := []models.Article{}
 
 	for rows.Next() {
 		var a models.Article

@@ -1,4 +1,4 @@
-module github.com/cryptosignal-news/backend
+module cryptosignal-news/backend
 
 go 1.22
 

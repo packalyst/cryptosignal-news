@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/cryptosignal-news/backend/internal/database"
-	"github.com/cryptosignal-news/backend/internal/models"
+	"cryptosignal-news/backend/internal/database"
+	"cryptosignal-news/backend/internal/models"
 )
 
 var (

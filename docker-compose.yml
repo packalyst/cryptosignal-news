@@ -7,15 +7,21 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8080:8080"
+    volumes:
+      - api_secrets:/app/secrets
     environment:
       - DATABASE_URL=postgres://${POSTGRES_USER:?Set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?Set POSTGRES_DB in .env}?sslmode=disable
       - REDIS_URL=redis://redis:6379
       - ENV=development
       - PORT=8080
       - LOG_LEVEL=debug
-      - CORS_ORIGINS=http://localhost:3000
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - GROQ_API_KEY=${GROQ_API_KEY:-}
-      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - TRANSLATION_TARGET_LANGUAGE=${TRANSLATION_TARGET_LANGUAGE:-en}
+      - MODEL_TRANSLATION=${MODEL_TRANSLATION:-llama-3.1-8b-instant}
+      - MODEL_SENTIMENT=${MODEL_SENTIMENT:-llama-3.3-70b-versatile}
+      - MODEL_SUMMARY=${MODEL_SUMMARY:-llama-3.3-70b-versatile}
+      - JWT_SECRET=${JWT_SECRET:-}
       - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-true}
       - RATE_LIMIT_ANONYMOUS=${RATE_LIMIT_ANONYMOUS:-10}
       - RATE_LIMIT_FREE=${RATE_LIMIT_FREE:-60}
@@ -40,6 +46,10 @@ services:
       - FETCH_INTERVAL=180
       - LOG_LEVEL=info
       - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - TRANSLATION_TARGET_LANGUAGE=${TRANSLATION_TARGET_LANGUAGE:-en}
+      - TRANSLATION_INTERVAL=${TRANSLATION_INTERVAL:-30s}
+      - TRANSLATION_BATCH_SIZE=${TRANSLATION_BATCH_SIZE:-5}
+      - MODEL_TRANSLATION=${MODEL_TRANSLATION:-llama-3.1-8b-instant}
     depends_on:
       - api
     restart: unless-stopped
@@ -71,8 +81,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/migrations:/docker-entrypoint-initdb.d
-    ports:
-      - "5432:5432"
+    # No external ports - only accessible within Docker network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
       interval: 5s
@@ -83,8 +92,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    # No external ports - only accessible within Docker network
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
@@ -103,3 +111,4 @@ networks:
 volumes:
   postgres_data:
   redis_data:
+  api_secrets:

@@ -7,8 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/cryptosignal-news/backend/internal/database"
-	"github.com/cryptosignal-news/backend/internal/models"
+	"cryptosignal-news/backend/internal/database"
+	"cryptosignal-news/backend/internal/models"
 )
 
 // SourceRepository handles source database operations
@@ -44,7 +44,7 @@ func (r *SourceRepository) List(ctx context.Context) ([]SourceWithCount, error) 
 	}
 	defer rows.Close()
 
-	var sources []SourceWithCount
+	sources := []SourceWithCount{}
 	for rows.Next() {
 		var s SourceWithCount
 		var websiteURL, category *string
@@ -87,7 +87,7 @@ func (r *SourceRepository) GetCategories(ctx context.Context) ([]models.Category
 	}
 	defer rows.Close()
 
-	var categories []models.Category
+	categories := []models.Category{}
 	for rows.Next() {
 		var c models.Category
 		if err := rows.Scan(&c.Name, &c.Count); err != nil {
@@ -294,7 +294,7 @@ func (r *SourceRepository) GetSourceStats(ctx context.Context) ([]models.SourceS
 	}
 	defer rows.Close()
 
-	var stats []models.SourceStats
+	stats := []models.SourceStats{}
 	for rows.Next() {
 		var s models.SourceStats
 		if err := rows.Scan(&s.SourceID, &s.SourceKey, &s.ArticlesFetched, &s.ErrorCount, &s.LastFetchAt); err != nil {
@@ -325,7 +325,7 @@ func (r *SourceRepository) GetUnhealthySources(ctx context.Context, errorThresho
 
 // scanSources scans rows into source structs
 func (r *SourceRepository) scanSources(rows pgx.Rows) ([]models.Source, error) {
-	var sources []models.Source
+	sources := []models.Source{}
 
 	for rows.Next() {
 		var s models.Source

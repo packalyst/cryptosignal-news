@@ -4,11 +4,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cryptosignal-news/backend/internal/api/request"
-	"github.com/cryptosignal-news/backend/internal/api/response"
-	"github.com/cryptosignal-news/backend/internal/cache"
-	"github.com/cryptosignal-news/backend/internal/middleware"
-	"github.com/cryptosignal-news/backend/internal/service"
+	"cryptosignal-news/backend/internal/api/request"
+	"cryptosignal-news/backend/internal/api/response"
+	"cryptosignal-news/backend/internal/cache"
+	"cryptosignal-news/backend/internal/middleware"
+	"cryptosignal-news/backend/internal/service"
 )
 
 // NewsHandler handles news-related HTTP requests
@@ -24,7 +24,7 @@ func NewNewsHandler(newsService *service.NewsService) *NewsHandler {
 }
 
 // ListNews handles GET /api/v1/news
-// Query params: limit (1-100, default 20), offset, source, category, language, from, to
+// Query params: limit (1-100, default 20), offset, source, category (comma-separated), language, from, to
 func (h *NewsHandler) ListNews(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -32,19 +32,29 @@ func (h *NewsHandler) ListNews(w http.ResponseWriter, r *http.Request) {
 	limit := request.GetQueryIntWithRange(r, "limit", 20, 1, 100)
 	offset := request.GetQueryInt(r, "offset", 0)
 	source := request.GetQueryString(r, "source", "")
-	category := request.GetQueryString(r, "category", "")
+	categoryParam := request.GetQueryString(r, "category", "")
 	language := request.GetQueryString(r, "language", "")
 	from := request.GetQueryTime(r, "from")
 	to := request.GetQueryTime(r, "to")
 
+	// Parse comma-separated categories
+	var categories []string
+	if categoryParam != "" {
+		for _, cat := range strings.Split(categoryParam, ",") {
+			if trimmed := strings.TrimSpace(cat); trimmed != "" {
+				categories = append(categories, trimmed)
+			}
+		}
+	}
+
 	opts := service.ListOptions{
-		Limit:    limit,
-		Offset:   offset,
-		Source:   source,
-		Category: category,
-		Language: language,
-		From:     from,
-		To:       to,
+		Limit:      limit,
+		Offset:     offset,
+		Source:     source,
+		Categories: categories,
+		Language:   language,
+		From:       from,
+		To:         to,
 	}
 
 	result, err := h.newsService.GetLatest(ctx, opts)
@@ -116,6 +126,13 @@ func (h *NewsHandler) SearchNews(w http.ResponseWriter, r *http.Request) {
 	query := request.GetQueryString(r, "q", "")
 	if strings.TrimSpace(query) == "" {
 		response.BadRequest(w, "Search query is required")
+		return
+	}
+
+	// Limit query length to prevent abuse
+	const maxQueryLen = 200
+	if len(query) > maxQueryLen {
+		response.BadRequest(w, "Search query too long (max 200 characters)")
 		return
 	}
 
@@ -199,6 +216,12 @@ func (h *NewsHandler) NewsByCoin(w http.ResponseWriter, r *http.Request) {
 	symbol := request.GetURLParam(r, "symbol")
 	if symbol == "" {
 		response.BadRequest(w, "Coin symbol is required")
+		return
+	}
+
+	// Validate symbol length (typical symbols are 2-10 chars)
+	if len(symbol) > 10 {
+		response.BadRequest(w, "Invalid coin symbol")
 		return
 	}
 

@@ -7,7 +7,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/cryptosignal-news/backend/internal/models"
+	"cryptosignal-news/backend/internal/models"
 )
 
 var (
@@ -29,17 +29,19 @@ type Claims struct {
 
 // JWTService handles JWT token operations
 type JWTService struct {
-	secret     []byte
-	expiration time.Duration
-	issuer     string
+	secret             []byte
+	expiration         time.Duration
+	refreshGracePeriod time.Duration
+	issuer             string
 }
 
 // NewJWTService creates a new JWT service
-func NewJWTService(secret string, expiration time.Duration) *JWTService {
+func NewJWTService(secret string, expiration time.Duration, refreshGracePeriod time.Duration) *JWTService {
 	return &JWTService{
-		secret:     []byte(secret),
-		expiration: expiration,
-		issuer:     "cryptosignal-news",
+		secret:             []byte(secret),
+		expiration:         expiration,
+		refreshGracePeriod: refreshGracePeriod,
+		issuer:             "cryptosignal-news",
 	}
 }
 
@@ -119,10 +121,9 @@ func (s *JWTService) Refresh(tokenString string) (string, error) {
 				return "", ErrInvalidToken
 			}
 
-			// Check grace period (7 days after expiration)
+			// Check grace period for refresh
 			if claims.ExpiresAt != nil {
-				gracePeriod := 7 * 24 * time.Hour
-				if time.Since(claims.ExpiresAt.Time) > gracePeriod {
+				if time.Since(claims.ExpiresAt.Time) > s.refreshGracePeriod {
 					return "", ErrExpiredToken
 				}
 			}

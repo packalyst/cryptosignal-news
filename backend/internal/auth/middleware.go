@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cryptosignal-news/backend/internal/models"
+	"cryptosignal-news/backend/internal/models"
 )
 
 // Context keys for authentication

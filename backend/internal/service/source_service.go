@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/cryptosignal-news/backend/internal/cache"
-	"github.com/cryptosignal-news/backend/internal/models"
-	"github.com/cryptosignal-news/backend/internal/repository"
+	"cryptosignal-news/backend/internal/cache"
+	"cryptosignal-news/backend/internal/models"
+	"cryptosignal-news/backend/internal/repository"
 )
 
 // SourceService handles business logic for source operations
