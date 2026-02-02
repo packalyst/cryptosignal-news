@@ -61,7 +61,11 @@ GROQ_API_KEY=your_groq_api_key
 
 4. Start services:
 ```bash
+# Backend only (API, fetcher, postgres, redis)
 docker compose up -d
+
+# With frontend
+docker compose --profile frontend up -d
 ```
 
 5. Access the application:

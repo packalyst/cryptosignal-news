@@ -71,6 +71,8 @@ services:
     restart: unless-stopped
     networks:
       - cryptosignal
+    profiles:
+      - frontend
 
   postgres:
     image: postgres:16-alpine
