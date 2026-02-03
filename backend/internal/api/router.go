@@ -70,29 +70,36 @@ func NewRouter(cfg *config.Config, db *database.DB, redisCache *cache.Redis) *ch
 
 	// API v1
 	r.Route("/api/v1", func(r chi.Router) {
-		// Public auth endpoints
+		// Public auth endpoints (always accessible)
 		r.Post("/auth/register", authHandler.Register)
 		r.Post("/auth/login", authHandler.Login)
 		r.Post("/auth/refresh", authHandler.RefreshToken)
 
-		// Public news endpoints
-		r.Get("/news", newsHandler.ListNews)
-		r.Get("/news/breaking", newsHandler.BreakingNews)
-		r.Get("/news/search", newsHandler.SearchNews)
-		r.Get("/news/{id}", newsHandler.GetArticle)
-		r.Get("/news/coin/{symbol}", newsHandler.NewsByCoin)
-
-		// Public source endpoints
-		r.Get("/sources", sourceHandler.ListSources)
-		r.Get("/categories", sourceHandler.ListCategories)
-
-		// AI endpoints
-		r.Get("/ai/sentiment", aiHandler.GetSentiment)
-		r.Get("/ai/summary", aiHandler.GetSummary)
-		r.Get("/ai/signals", aiHandler.GetSignals)
-
-		// Status endpoint
+		// Status endpoint (always accessible)
 		r.Get("/status", statusHandler.GetStatus)
+
+		// Conditionally protected endpoints (news, sources, AI)
+		r.Group(func(r chi.Router) {
+			if cfg.RequireAuthForPublicAPI {
+				r.Use(authMiddleware.Authenticate)
+			}
+
+			// News endpoints
+			r.Get("/news", newsHandler.ListNews)
+			r.Get("/news/breaking", newsHandler.BreakingNews)
+			r.Get("/news/search", newsHandler.SearchNews)
+			r.Get("/news/{id}", newsHandler.GetArticle)
+			r.Get("/news/coin/{symbol}", newsHandler.NewsByCoin)
+
+			// Source endpoints
+			r.Get("/sources", sourceHandler.ListSources)
+			r.Get("/categories", sourceHandler.ListCategories)
+
+			// AI endpoints
+			r.Get("/ai/sentiment", aiHandler.GetSentiment)
+			r.Get("/ai/summary", aiHandler.GetSummary)
+			r.Get("/ai/signals", aiHandler.GetSignals)
+		})
 
 		// Protected user endpoints (require authentication)
 		r.Route("/user", func(r chi.Router) {

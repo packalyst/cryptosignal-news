@@ -55,7 +55,8 @@ type Config struct {
 	CacheTTL int
 
 	// Feature flags
-	EnableMetrics bool
+	EnableMetrics          bool
+	RequireAuthForPublicAPI bool // Require authentication for news/AI endpoints
 
 	// Fetcher settings
 	FetcherWorkers  int
@@ -96,7 +97,8 @@ func Load() *Config {
 		MaxAPIKeysPerUser:     getEnvInt("MAX_API_KEYS_PER_USER", 10),
 		HSTSEnabled:           getEnvBool("HSTS_ENABLED", false),
 		CacheTTL:              getEnvInt("CACHE_TTL", 60),
-		EnableMetrics:      getEnvBool("ENABLE_METRICS", false),
+		EnableMetrics:           getEnvBool("ENABLE_METRICS", false),
+		RequireAuthForPublicAPI: getEnvBool("REQUIRE_AUTH_FOR_PUBLIC_API", false),
 		FetcherWorkers:     getEnvInt("FETCHER_WORKERS", 50),
 		FetcherTimeout:     getEnvDuration("FETCHER_TIMEOUT", 10*time.Second),
 		FetcherInterval:    getEnvDuration("FETCH_INTERVAL", 3*time.Minute),
